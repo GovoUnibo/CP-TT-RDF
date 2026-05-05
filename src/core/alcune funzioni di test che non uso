@@ -1,0 +1,79 @@
+import torch, time
+
+
+from src.core.common import CommonMethods 
+from src.core.sdf_creator import SDFTrain
+from src.utils.train_config import TrainConfig
+import matplotlib.pyplot as plt
+from src.core.math.projection_point import spherical_projection, 
+import numpy as np
+from typing import Literal
+
+
+
+
+    
+
+
+
+
+
+
+    def plot_projection(self, points, model_name, save_path=None):
+        
+        model: Model = getattr(self, model_name + self.model_extension)
+        mesh_pv = self.to_mesh(model_name, type='pyvista')
+        if self.method == 'sphere':
+            from src.visu.plot_projection import plot_points_and_projection_on_sphere, save_spherical_projection_gif
+            if save_path is None:
+                plot_points_and_projection_on_sphere(
+                    points,
+                    mesh_pv,
+                    model.centroid_offset,
+                    model.scale_factor,
+                    sphere_center=torch.zeros(3, device=self.device, dtype=self.dtype),
+                    r1=1.0,                                # raggio in spazio normalizzato
+                    project=True,
+                    device='cpu',
+                    point_size=10
+                    )
+            else:
+                save_spherical_projection_gif(
+                    points,
+                    mesh_pv,
+                    model.centroid_offset,
+                    model.scale_factor,
+                    sphere_center=model.center_ellipsoid,  # centro sfera (normalizzato)
+                    r1=1.0,                                # raggio sfera (normalizzato)
+                    gif_path=save_path,
+                    fps=24,
+                    duration_s=3.0,
+                    orbit_degrees=360,
+                    view="iso",
+                    easing="ease_in_out",
+                    show_paths=True,
+                    show_targets=True
+                )
+                
+        elif self.method == 'ellipsoid':
+            from src.visu.plot_projection import plot_points_and_projection_on_ellipsoid, save_projection_ellipsoidal_proj_gif
+            if save_path is None:
+                plot_points_and_projection_on_ellipsoid( points=points, model_mesh_pv=mesh_pv, center=model.centroid_offset, scale=model.scale_factor, ellipsoid_center=model.center_ellipsoid, ellipsoid_axes=model.axes_ellipsoid / 2, ellipsoid_eigenvectors=model.eigen_vector_ellipsoid, device=self.device, project=True)
+            else:
+                save_projection_ellipsoidal_proj_gif(points,mesh_pv,model.centroid_offset,model.scale_factor,model.center_ellipsoid,model.axes_ellipsoid / 2,model.eigen_vector_ellipsoid,gif_path=save_path,     fps=24,duration_s=3.0,orbit_degrees=360,view="iso",easing="ease_in_out",   show_paths=True,show_targets=True)
+        else:
+            raise ValueError(f"Unknown projection method: {self.method}")
+        
+    def plot_slice(self, link_name ):
+        from src.visu.debug_gradinet import plot_sdf_slice_2d_external
+        return plot_sdf_slice_2d_external(self, link_name)
+    
+    def plot_grad_correction(self, link_name, points_world):
+        from src.visu.debug_gradinet import plot_transport_and_correction_gif
+        return plot_transport_and_correction_gif(self, link_name, points_world)
+
+    
+    #     plt.tight_layout(); plt.show()
+
+
+

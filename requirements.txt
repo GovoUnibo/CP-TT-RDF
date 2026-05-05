@@ -1,0 +1,21 @@
+# Core scientific stack
+numpy
+scipy
+matplotlib
+
+# Deep learning
+torch
+tensorly
+cvxpy
+
+# Mesh and geometry processing
+trimesh
+mesh-to-sdf
+scikit-image
+pymeshfix
+
+# Visualization and utilities
+pyvista
+vtk
+imageio
+psutil
