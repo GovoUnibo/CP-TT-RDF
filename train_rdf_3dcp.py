@@ -10,16 +10,16 @@ ROBOT_NAME = 'panda_robot'
 
 BASE_LINK_NAMES = [
     'panda_link0',
-    'panda_link1',
-    'panda_link2',
-    'panda_link3',
-    'panda_link4',
-    'panda_link5',
-    'panda_link6',
-    'panda_link7',
-    'panda_hand',
-    'panda_leftfinger',
-    'panda_rightfinger',
+    # 'panda_link1',
+    # 'panda_link2',
+    # 'panda_link3',
+    # 'panda_link4',
+    # 'panda_link5',
+    # 'panda_link6',
+    # 'panda_link7',
+    # 'panda_hand',
+    # 'panda_leftfinger',
+    # 'panda_rightfinger',
 ]
 
 N_FUNC = 8
