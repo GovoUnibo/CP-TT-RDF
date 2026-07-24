@@ -299,9 +299,9 @@ def create_individual_figures(
                     if plotted_values:
                         ax.set_yscale("log")
 
-            ax.set_title(f"{title_prefix} — {ylabel}", fontsize=TITLE_FONT_SIZE)
             ax.set_xlabel(rank_label, fontsize=AXIS_LABEL_FONT_SIZE)
             ax.set_ylabel(ylabel, fontsize=AXIS_LABEL_FONT_SIZE)
+            ax.set_xlim(left=0.0)
             apply_axis_style(ax)
             ax.legend(
                 [f"N={order}" for order in orders if grouped_curve(rows, representation, order)],

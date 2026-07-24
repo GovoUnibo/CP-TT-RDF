@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent GPU-runtime sweep for dense, CP and TT Bernstein RDF models."""
+"""Independent parameter-storage sweep for dense, CP and TT RDF models."""
 
 from __future__ import annotations
 
@@ -7,14 +7,8 @@ import csv
 import gc
 import shutil
 import sys
-import time
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 
 
@@ -39,39 +33,35 @@ LINK_NAME = "panda_link0"
 POLYNOMIAL_ORDERS = (8, 16, 24)
 CP_RANKS = (4, 8, 16, 24, 32, 48)
 TT_RANKS = (2, 4, 8, 12, 16, 24)
-DENSE_TRAIN_ITERS = 200
-CP_TRAIN_ITERS = 200
-TT_TRAIN_ITERS = 200
-RUNTIME_BATCH_SIZE = 10_000
-WARMUP_PASSES = 10
-TIMING_PASSES = 50
-RUNTIME_OUTLIER_MAD_Z = 3.5
-SEED = 0
+DENSE_TRAIN_ITERS = 100
+CP_TRAIN_ITERS = 100
+TT_TRAIN_ITERS = 100
+PEAK_BATCH_SIZE = 100_000
 DEVICE = "cuda"
 DTYPE = torch.float32
 
 WS_PATH = ROOT / "panda_test"
 RESULT_DIR = SCRIPT_DIR / "result"
-CSV_PATH = RESULT_DIR / f"{LINK_NAME}_runtime.csv"
+CSV_PATH = RESULT_DIR / f"{LINK_NAME}_memory.csv"
 
 
 def backup_models() -> list[tuple[Path, Path, bool]]:
-    saved = []
+    backups = []
     for suffix in ("_w.pt", "_cp.pt", "_tt.pt"):
         model = WS_PATH / "Models" / f"{LINK_NAME}{suffix}"
-        backup = model.with_name(model.name + ".runtime_backup")
+        backup = model.with_name(model.name + ".memory_backup")
         if backup.exists():
             shutil.copy2(backup, model)
             backup.unlink()
         existed = model.exists()
         if existed:
             shutil.copy2(model, backup)
-        saved.append((model, backup, existed))
-    return saved
+        backups.append((model, backup, existed))
+    return backups
 
 
-def restore_models(saved: list[tuple[Path, Path, bool]]) -> None:
-    for model, backup, existed in saved:
+def restore_models(backups: list[tuple[Path, Path, bool]]) -> None:
+    for model, backup, existed in backups:
         if existed and backup.exists():
             shutil.copy2(backup, model)
             backup.unlink()
@@ -79,44 +69,32 @@ def restore_models(saved: list[tuple[Path, Path, bool]]) -> None:
             model.unlink()
 
 
-def trim_outliers(values: np.ndarray) -> np.ndarray:
-    median = np.median(values)
-    mad = np.median(np.abs(values - median))
-    if mad <= np.finfo(values.dtype).eps:
-        return values
-    z = 0.6745 * (values - median) / mad
-    kept = values[np.abs(z) <= RUNTIME_OUTLIER_MAD_Z]
-    return kept if kept.size >= max(3, values.size // 2) else values
-
-
-def parameter_bytes(rdf, representation: str) -> int:
+def stored_parameter_bytes(rdf, representation: str) -> int:
     model = getattr(rdf, LINK_NAME + rdf.model_extension)
     tensors = (
         (model.weights,) if representation == "dense" else
         (model.A, model.B, model.C, model.lamd) if representation == "cp" else
         (model.G1, model.G2, model.G3)
     )
-    return sum(int(t.numel() * t.element_size()) for t in tensors)
+    return sum(int(tensor.numel() * tensor.element_size()) for tensor in tensors)
 
 
-def benchmark(rdf, representation: str) -> tuple[float, int]:
+@torch.inference_mode()
+def peak_gpu_bytes(rdf) -> int:
+    """Peak allocated GPU memory for one fixed inference batch."""
     model = getattr(rdf, LINK_NAME + rdf.model_extension)
-    generator = torch.Generator(device="cpu").manual_seed(SEED)
-    normalized = torch.rand((RUNTIME_BATCH_SIZE, 3), generator=generator, dtype=DTYPE) * 2.0 - 1.0
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    normalized = torch.rand((PEAK_BATCH_SIZE, 3), generator=generator, dtype=DTYPE) * 2.0 - 1.0
     centroid = torch.as_tensor(model.centroid_offset, device=DEVICE, dtype=DTYPE).reshape(1, 3)
     scale = torch.as_tensor(model.scale_factor, device=DEVICE, dtype=DTYPE).reshape(1, 1)
     points = (normalized.to(DEVICE) * scale + centroid).contiguous()
-    for _ in range(WARMUP_PASSES):
-        rdf.sdf_kernel_for_tests(LINK_NAME, points, get_grad=False, get_min=False)
+
+    rdf.sdf_kernel_for_tests(LINK_NAME, points, get_grad=False, get_min=False)
     torch.cuda.synchronize()
-    samples = []
-    for _ in range(TIMING_PASSES):
-        torch.cuda.synchronize()
-        start = time.perf_counter()
-        rdf.sdf_kernel_for_tests(LINK_NAME, points, get_grad=False, get_min=False)
-        torch.cuda.synchronize()
-        samples.append((time.perf_counter() - start) * 1e3)
-    return float(np.median(trim_outliers(np.asarray(samples, dtype=np.float64)))), parameter_bytes(rdf, representation)
+    torch.cuda.reset_peak_memory_stats()
+    rdf.sdf_kernel_for_tests(LINK_NAME, points, get_grad=False, get_min=False)
+    torch.cuda.synchronize()
+    return int(torch.cuda.max_memory_allocated())
 
 
 def train_dense(n: int):
@@ -143,31 +121,11 @@ def train_tt(n: int, rank: int):
     return rdf
 
 
-def plot(rows: list[dict[str, object]]) -> None:
-    for representation, xlabel in (("cp", "CP rank $R$"), ("tt", "TT rank $r_1=r_2$")):
-        fig, ax = plt.subplots(figsize=(14.5, 8.6))
-        for color, n in zip(("tab:blue", "tab:orange", "tab:green"), POLYNOMIAL_ORDERS):
-            curve = sorted([r for r in rows if r["representation"] == representation and r["N"] == n], key=lambda r: r["rank"])
-            ax.plot([r["rank"] for r in curve], [r["runtime_ms"] for r in curve], color=color, linewidth=3.2, label=f"N={n}")
-            dense = next((r for r in rows if r["representation"] == "dense" and r["N"] == n), None)
-            if dense:
-                ax.axhline(dense["runtime_ms"], color=color, linestyle="--", linewidth=3.2, alpha=0.8)
-        ax.set_xlabel(xlabel, fontsize=23)
-        ax.set_ylabel("Inference time [ms]", fontsize=23)
-        ax.set_xlim(left=0.0)
-        ax.tick_params(axis="both", which="both", labelsize=22)
-        ax.grid(True, which="both", alpha=0.25)
-        ax.legend(frameon=False, fontsize=18)
-        fig.subplots_adjust(left=0.09, right=0.985, bottom=0.14, top=0.88)
-        fig.savefig(RESULT_DIR / f"{LINK_NAME}_{representation}_runtime_benchmark.png", dpi=180, bbox_inches="tight")
-        plt.close(fig)
-
-
 def main() -> None:
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for this GPU runtime benchmark.")
+        raise RuntimeError("CUDA is required for the existing RDF training path.")
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    saved = backup_models()
+    backups = backup_models()
     rows = []
     try:
         for n in POLYNOMIAL_ORDERS:
@@ -176,19 +134,20 @@ def main() -> None:
                     if representation == "tt" and rank > n:
                         continue
                     rdf = trainer(n) if representation == "dense" else trainer(n, rank)
-                    runtime_ms, storage = benchmark(rdf, representation)
-                    rows.append({"representation": representation, "N": n, "rank": rank, "runtime_ms": runtime_ms, "parameter_bytes": storage})
-                    print(f"{representation:>5s} N={n:2d} rank={rank:2d}: {runtime_ms:.4f} ms")
+                    byte_count = stored_parameter_bytes(rdf, representation)
+                    peak_bytes = peak_gpu_bytes(rdf)
+                    rows.append({"representation": representation, "N": n, "rank": rank, "parameter_bytes": byte_count, "parameter_kib": byte_count / 1024.0, "peak_gpu_bytes": peak_bytes, "peak_gpu_gb": peak_bytes / 1e9})
+                    print(f"{representation:>5s} N={n:2d} rank={rank:2d}: peak={peak_bytes / 1e9:.3f} GB")
                     del rdf
                     gc.collect()
                     torch.cuda.empty_cache()
         with CSV_PATH.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=("representation", "N", "rank", "runtime_ms", "parameter_bytes"))
+            writer = csv.DictWriter(handle, fieldnames=("representation", "N", "rank", "parameter_bytes", "parameter_kib", "peak_gpu_bytes", "peak_gpu_gb"))
             writer.writeheader()
             writer.writerows(rows)
-        plot(rows)
     finally:
-        restore_models(saved)
+        restore_models(backups)
+    print(f"CSV: {CSV_PATH}")
 
 
 if __name__ == "__main__":

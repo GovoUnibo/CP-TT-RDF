@@ -50,9 +50,9 @@ def save_plot(rows: list[dict[str, object]], representation: str, output_path: P
                 linewidth=3.2,
                 label=f"N={n_func}",
             )
-    ax.set_title(f"{representation.upper()} vs dense weights", fontsize=13)
     ax.set_xlabel(xlabel, fontsize=23)
     ax.set_ylabel("Weight-tensor RMSE", fontsize=23)
+    ax.set_xlim(left=0.0)
     ax.tick_params(axis="both", which="both", labelsize=22)
     ax.grid(True, which="both", alpha=0.25)
     ax.legend(frameon=False, fontsize=18)
