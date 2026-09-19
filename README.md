@@ -1,5 +1,6 @@
 # CP-TT-RDF
 
+```bibtex
 @article{GOVONI2026105717,
   title   = {Fast GPU evaluation of differentiable Signed Distance Fields for robotics via tensor decompositions},
   journal = {Robotics and Autonomous Systems},
@@ -9,6 +10,7 @@
   doi     = {10.1016/j.robot.2026.105717},
   author  = {Andrea Govoni and Sylvain Calinon and Gianluca Palli}
 }
+```
 
 Quick user guide for running RDF experiments with the available parameterizations:
 
